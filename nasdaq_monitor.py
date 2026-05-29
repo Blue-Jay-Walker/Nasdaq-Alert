@@ -37,7 +37,10 @@ def fetch_nasdaq_data():
     current_change_pct = None
 
     if prev_open is not None and prev_open != 0:
-        prev_change_pct = ((prev_close - prev_open) / prev_open) * 100
+    # NEW (correct): calculates day-over-day change (close_2_days_ago → close_1_day_ago)
+        close_2_days_ago = hist["Close"].iloc[-2]
+        close_1_day_ago = hist["Close"].iloc[-1]
+        prev_change_pct = ((close_1_day_ago - close_2_days_ago) / close_2_days_ago) * 100
 
     if prev_close is not None and prev_close != 0:
         current_change_pct = ((current - prev_close) / prev_close) * 100
