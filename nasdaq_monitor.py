@@ -1,7 +1,7 @@
-# nasdaq_monitor.py (Streamlit version with secrets) - FIXED
+# nasdaq_monitor.py (Streamlit version with secrets) - FIXED V2
 import streamlit as st
 import yfinance as yf
-from datetime import datetime, timedelta
+from datetime import datetime
 import smtplib
 from email.mime.text import MIMEText
 
@@ -30,33 +30,51 @@ SMTP_PORT = 587
 # ── Data Fetching ────────────────────────────────────────────────────────────
 @st.cache_data(ttl=60)
 def fetch_nasdaq_data():
-    """Fetch previous close, current price, and calculate change percentages correctly."""
-    ticker = yf.Ticker(NASDAQ_TICKER)
-    info = ticker.fast_info
-    current = info.last_price
-    prev_close = info.previous_close
+    """Fetch Nasdaq data and calculate change percentages correctly.
     
-    # Get historical data to find the close from 2 days ago (for prev session change)
-    # This gives us the day-over-day change, not intraday change
-    hist = ticker.history(period="5d")
+    prev_change_pct: Day-over-day change for the PREVIOUS completed session
+                     (e.g., May 28 close vs May 27 close)
+    current_change_pct: Intraday change for CURRENT session 
+                        (e.g., current price vs May 28 close)
+    """
+    ticker = yf.Ticker(NASDAQ_TICKER)
+    
+    # Get historical daily closes - this is the cleanest approach
+    hist = ticker.history(period="10d")
+    
+    if len(hist) < 3:
+        return None, None, None, None
+    
+    # Get the last 3 closing prices
+    # hist.iloc[-1] = most recent CLOSE (yesterday's close if market closed, or today's close if closed)
+    # hist.iloc[-2] = previous session close  
+    # hist.iloc[-3] = session before that
+    
+    # The most recent completed session's close
+    most_recent_close = hist["Close"].iloc[-1]
+    # The session before that (2 days ago)
+    prev_session_close = hist["Close"].iloc[-2]
+    
+    # Current price (live/intraday)
+    # Use fast_info for real-time current price
+    info = ticker.fast_info
+    current_price = info.last_price
+    prev_close = info.previous_close
     
     prev_change_pct = None
     current_change_pct = None
     
+    # Prev session change: (most_recent_close - prev_session_close) / prev_session_close
+    # This is the actual day-over-day change for the last completed session
+    if len(hist) >= 2 and most_recent_close != 0:
+        prev_change_pct = ((most_recent_close - prev_session_close) / prev_session_close) * 100
+    
     # Current session change: (current_price - prev_close) / prev_close
+    # This is the intraday change for today's session
     if prev_close is not None and prev_close != 0:
-        current_change_pct = ((current - prev_close) / prev_close) * 100
+        current_change_pct = ((current_price - prev_close) / prev_close) * 100
     
-    # Previous session change: (prev_close - close_2_days_ago) / close_2_days_ago
-    # This is the actual day-over-day change for the previous completed session
-    if len(hist) >= 2 and prev_close is not None:
-        # The last row in hist is today (or most recent trading day)
-        # The second-to-last row is the previous completed session
-        close_2_days_ago = hist["Close"].iloc[-2]
-        close_1_day_ago = hist["Close"].iloc[-1]  # This should match prev_close
-        prev_change_pct = ((close_1_day_ago - close_2_days_ago) / close_2_days_ago) * 100
-    
-    return prev_close, current, prev_change_pct, current_change_pct
+    return prev_close, current_price, prev_change_pct, current_change_pct
 
 
 # ── Email Functions ──────────────────────────────────────────────────────────
