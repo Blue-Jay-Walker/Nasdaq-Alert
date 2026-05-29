@@ -1,89 +1,51 @@
-# nasdaq_monitor.py (Streamlit version with secrets) - FIXED V2
 import streamlit as st
 import yfinance as yf
 from datetime import datetime
 import smtplib
 from email.mime.text import MIMEText
 
-
-# ─────────────────────────────────────────
-# CONSTANTS
-# ─────────────────────────────────────────
 ALERT_THRESHOLD_PREV_PCT = -0.5
 ALERT_THRESHOLD_CURR_PCT = -0.2
 NASDAQ_TICKER = "^IXIC"
 
-
-# ── Page Config ──────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Nasdaq Monitor", layout="wide")
 st.title("📈 Nasdaq Real-Time Monitor")
 
-
-# ── Load Secrets ─────────────────────────────────────────────────────────────
 EMAIL_SENDER = st.secrets["EMAIL_SENDER"]
 EMAIL_PASSWORD = st.secrets["EMAIL_PASSWORD"]
 EMAIL_RECEIVER = st.secrets["EMAIL_RECEIVER"]
 SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 587
 
-
-# ── Data Fetching ────────────────────────────────────────────────────────────
 @st.cache_data(ttl=60)
 def fetch_nasdaq_data():
-    """Fetch Nasdaq data and calculate change percentages correctly.
-    
-    prev_change_pct: Day-over-day change for the PREVIOUS completed session
-                     (e.g., May 28 close vs May 27 close)
-    current_change_pct: Intraday change for CURRENT session 
-                        (e.g., current price vs May 28 close)
-    """
     ticker = yf.Ticker(NASDAQ_TICKER)
-    
-    # Get historical daily closes - this is the cleanest approach
-    hist = ticker.history(period="10d")
-    
-    if len(hist) < 3:
-        return None, None, None, None
-    
-    # Get the last 3 closing prices
-    # hist.iloc[-1] = most recent CLOSE (yesterday's close if market closed, or today's close if closed)
-    # hist.iloc[-2] = previous session close  
-    # hist.iloc[-3] = session before that
-    
-    # The most recent completed session's close
-    most_recent_close = hist["Close"].iloc[-1]
-    # The session before that (2 days ago)
-    prev_session_close = hist["Close"].iloc[-2]
-    
-    # Current price (live/intraday)
-    # Use fast_info for real-time current price
+    hist = ticker.history(period="10d", auto_adjust=False)
     info = ticker.fast_info
-    current_price = info.last_price
-    prev_close = info.previous_close
-    
-    prev_change_pct = None
-    current_change_pct = None
-    
-    # Prev session change: (most_recent_close - prev_session_close) / prev_session_close
-    # This is the actual day-over-day change for the last completed session
-    if len(hist) >= 2 and most_recent_close != 0:
-        prev_change_pct = ((most_recent_close - prev_session_close) / prev_session_close) * 100
-    
-    # Current session change: (current_price - prev_close) / prev_close
-    # This is the intraday change for today's session
-    if prev_close is not None and prev_close != 0:
-        current_change_pct = ((current_price - prev_close) / prev_close) * 100
-    
-    return prev_close, current_price, prev_change_pct, current_change_pct
+    current_index = info.last_price
+
+    if hist.empty or len(hist) < 2:
+        return None, None, None, None, None, None, None, None
+
+    prev_row = hist.iloc[-1]
+    curr_open = prev_row["Open"]
+    prev_close = prev_row["Close"]
+    prev_open = hist.iloc[-2]["Open"]
+    prev_prev_close = hist.iloc[-2]["Close"]
+
+    prev_open_diff = ((prev_close - prev_open) / prev_open * 100) if prev_open else None
+    prev_close_diff = ((prev_close - prev_prev_close) / prev_prev_close * 100) if prev_prev_close else None
+    curr_open_diff = ((current_index - curr_open) / curr_open * 100) if curr_open else None
+    curr_index_diff = ((current_index - prev_close) / prev_close * 100) if prev_close else None
+
+    return prev_open, prev_close, current_index, curr_open, prev_open_diff, prev_close_diff, curr_open_diff, curr_index_diff
 
 
-# ── Email Functions ──────────────────────────────────────────────────────────
 def send_email(subject: str, body: str):
     msg = MIMEText(body, "html")
     msg["Subject"] = subject
     msg["From"] = EMAIL_SENDER
     msg["To"] = EMAIL_RECEIVER
-    
     with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
         server.ehlo()
         server.starttls()
@@ -91,78 +53,53 @@ def send_email(subject: str, body: str):
         server.sendmail(EMAIL_SENDER, EMAIL_RECEIVER, msg.as_string())
 
 
-def build_email_body(prev_close, current, prev_change_pct, current_change_pct, test=False):
+def build_email_body(prev_open, prev_close, current_open, current_index,
+                     prev_open_diff, prev_close_diff, curr_open_diff, curr_index_diff,
+                     test=False):
     tag = "[TEST] " if test else "[ALERT]"
-    prev_close_str = f"{prev_close:,.2f}" if prev_close is not None else "N/A"
-    current_str = f"{current:,.2f}" if current is not None else "N/A"
-    prev_pct_str = f"{prev_change_pct:.2f}%" if prev_change_pct is not None else "N/A"
-    curr_pct_str = f"{current_change_pct:.2f}%" if current_change_pct is not None else "N/A"
-    
-    prev_color = "red" if (prev_change_pct is not None and prev_change_pct <= ALERT_THRESHOLD_PREV_PCT) else "green"
-    curr_color = "red" if (current_change_pct is not None and current_change_pct <= ALERT_THRESHOLD_CURR_PCT) else "green"
-    
+    fmt = lambda x: f"{x:,.2f}" if x is not None else "N/A"
+    pct = lambda x: f"{x:.2f}%" if x is not None else "N/A"
     return f"""
     <h2>{tag}Nasdaq Alert</h2>
     <table border="1" cellpadding="6">
-      <tr><th>Metric</th><th>Value</th><th>Threshold</th></tr>
-      <tr><td>Previous Close</td><td>{prev_close_str}</td><td>-</td></tr>
-      <tr><td style="color:{prev_color}">Prev Session Change</td><td>{prev_pct_str}</td><td>{ALERT_THRESHOLD_PREV_PCT}%</td></tr>
-      <tr><td>Current Price</td><td>{current_str}</td><td>-</td></tr>
-      <tr><td style="color:{curr_color}">Current Session Change</td><td>{curr_pct_str}</td><td>{ALERT_THRESHOLD_CURR_PCT}%</td></tr>
+      <tr><th>Metric</th><th>Value</th></tr>
+      <tr><td>Previous Open</td><td>{fmt(prev_open)}</td></tr>
+      <tr><td>Previous Close</td><td>{fmt(prev_close)}</td></tr>
+      <tr><td>Previous Open to Close</td><td>{pct(prev_open_diff)}</td></tr>
+      <tr><td>Previous Close to Prior Close</td><td>{pct(prev_close_diff)}</td></tr>
+      <tr><td>Current Open</td><td>{fmt(current_open)}</td></tr>
+      <tr><td>Current Index</td><td>{fmt(current_index)}</td></tr>
+      <tr><td>Current Open to Index</td><td>{pct(curr_open_diff)}</td></tr>
+      <tr><td>Current Close Reference to Index</td><td>{pct(curr_index_diff)}</td></tr>
     </table>
     <p>Checked at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
     """
 
-
-# ── Fetch Data ───────────────────────────────────────────────────────────────
 try:
-    prev_close, current, prev_chg, curr_chg = fetch_nasdaq_data()
+    prev_open, prev_close, current_index, current_open, prev_open_diff, prev_close_diff, curr_open_diff, curr_index_diff = fetch_nasdaq_data()
     status = "OK"
 except Exception as e:
-    prev_close, current, prev_chg, curr_chg = None, None, None, None
+    prev_open = prev_close = current_index = current_open = None
+    prev_open_diff = prev_close_diff = curr_open_diff = curr_index_diff = None
     status = f"Error: {e}"
 
-
-# ── Display Metrics ──────────────────────────────────────────────────────────
-col1, col2 = st.columns(2)
-
-with col1:
-    st.metric(
-        label="Previous Close",
-        value=f"{prev_close:,.2f}" if prev_close else "N/A",
-        delta=f"{prev_chg:.2f}%" if prev_chg is not None else "N/A"
-    )
-
-with col2:
-    st.metric(
-        label="Current Price",
-        value=f"{current:,.2f}" if current else "N/A",
-        delta=f"{curr_chg:.2f}%" if curr_chg is not None else "N/A"
-    )
+c1, c2, c3, c4 = st.columns(4)
+with c1:
+    st.metric("Previous Open", f"{prev_open:,.2f}" if prev_open is not None else "N/A", f"{prev_open_diff:.2f}%" if prev_open_diff is not None else "N/A")
+with c2:
+    st.metric("Previous Close", f"{prev_close:,.2f}" if prev_close is not None else "N/A", f"{prev_close_diff:.2f}%" if prev_close_diff is not None else "N/A")
+with c3:
+    st.metric("Current Open", f"{current_open:,.2f}" if current_open is not None else "N/A", f"{curr_open_diff:.2f}%" if curr_open_diff is not None else "N/A")
+with c4:
+    st.metric("Current Index", f"{current_index:,.2f}" if current_index is not None else "N/A", f"{curr_index_diff:.2f}%" if curr_index_diff is not None else "N/A")
 
 st.caption(f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Status: {status}")
 
+st.success("✅ Nasdaq within normal range")
 
-# ── Alert Check ──────────────────────────────────────────────────────────────
-if (prev_chg is not None and curr_chg is not None and
-    prev_chg <= ALERT_THRESHOLD_PREV_PCT and
-    curr_chg <= ALERT_THRESHOLD_CURR_PCT):
-    st.error("🚨 ALERT: Nasdaq dropped below both thresholds!")
-    if st.button("Send Alert Email"):
-        try:
-            body = build_email_body(prev_close, current, prev_chg, curr_chg)
-            send_email("🚨 Nasdaq Double-Drop Alert", body)
-            st.success("✅ Alert email sent!")
-        except Exception as e:
-            st.error(f"❌ Failed to send email: {e}")
-else:
-    st.success("✅ Nasdaq within normal range")
-
-
-# ── Test Email Button ────────────────────────────────────────────────────────
 if st.button("📧 Send Test Email"):
     try:
-        body = build_email_body(prev_close, current, prev_chg, curr_chg, test=True)
+        body = build_email_body(prev_open, prev_close, current_open, current_index, prev_open_diff, prev_close_diff, curr_open_diff, curr_index_diff, test=True)
         send_email("[TEST] Nasdaq Monitor — Test Email", body)
         st.success("✅ Test email sent successfully!")
     except Exception as e:
