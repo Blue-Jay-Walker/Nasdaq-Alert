@@ -1,4 +1,4 @@
-# nasdaq_monitor.py (Streamlit version)
+# nasdaq_monitor.py (Streamlit version with secrets)
 import streamlit as st
 import yfinance as yf
 from datetime import datetime
@@ -12,16 +12,16 @@ ALERT_THRESHOLD_PREV_PCT = -0.5
 ALERT_THRESHOLD_CURR_PCT = -0.2
 NASDAQ_TICKER = "^IXIC"
 
-# Email config
-SMTP_HOST = "smtp.gmail.com"
-SMTP_PORT = 587
-EMAIL_SENDER = "jaymodi2026@gmail.com"
-EMAIL_PASSWORD = "nbyoxzxmfixxcfhe"
-EMAIL_RECEIVER = "jpmodi@gmail.com"
-
 # ── Page Config ──────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Nasdaq Monitor", layout="wide")
 st.title("📈 Nasdaq Real-Time Monitor")
+
+# ── Load Secrets ─────────────────────────────────────────────────────────────
+EMAIL_SENDER = st.secrets["EMAIL_SENDER"]
+EMAIL_PASSWORD = st.secrets["EMAIL_PASSWORD"]
+EMAIL_RECEIVER = st.secrets["EMAIL_RECEIVER"]
+SMTP_HOST = "smtp.gmail.com"
+SMTP_PORT = 587
 
 # ── Data Fetching ────────────────────────────────────────────────────────────
 @st.cache_data(ttl=60)
