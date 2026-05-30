@@ -34,9 +34,9 @@ def fetch_nasdaq_data():
     prev_prev_close = hist.iloc[-2]["Close"]
 
     prev_open_diff = ((prev_close - prev_open) / prev_open * 100) if prev_open else None
-    prev_close_diff = ((prev_close - prev_prev_close) / prev_prev_close * 100) if prev_prev_close else None
+    prev_close_diff = ((prev_close - prev_open) / prev_open * 100) if prev_prev_close else None
     curr_open_diff = ((current_index - curr_open) / curr_open * 100) if curr_open else None
-    curr_index_diff = ((current_index - prev_close) / prev_close * 100) if prev_close else None
+    curr_index_diff = ((current_index - curr_open) / curr_open * 100) if prev_close else None
 
     return prev_open, prev_close, current_index, curr_open, prev_open_diff, prev_close_diff, curr_open_diff, curr_index_diff
 
